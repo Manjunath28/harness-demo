@@ -26,6 +26,34 @@ pipeline:
                     command: echo hello world
                   timeout: ""
                   type: Run
+              - step:
+                  type: Run
+                  name: Run
+                  identifier: Run
+                  spec:
+                    shell: Sh
+                    command: |-
+                      cd app
+                      npm ci
+                  description: install dependency
+              - step:
+                  type: Run
+                  name: Run_Tests
+                  identifier: Run_Tests
+                  spec:
+                    shell: Sh
+                    command: |-
+                      cd app
+                      npm test
+              - step:
+                  type: BuildAndPushDockerRegistry
+                  name: BuildAndPushDockerRegistry_1
+                  identifier: BuildAndPushDockerRegistry_1
+                  spec:
+                    connectorRef: account.harnessImage
+                    repo: test
+                    tags:
+                      - 1.1.1.1
           platform:
             arch: Amd64
             os: Linux
