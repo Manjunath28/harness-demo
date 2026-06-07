@@ -1,0 +1,14 @@
+inputSet:
+  name: Build_Manjunath28_harness_demo_1780865310852-push-trigger-input-set
+  identifier: Build_Manjunath28_harness_demo_1780865310852pushtriggerinputset
+  orgIdentifier: default
+  projectIdentifier: Harnessdemo
+  pipeline:
+    identifier: Build_Manjunath28_harness_demo_1780865310852
+    properties:
+      ci:
+        codebase:
+          build:
+            type: branch
+            spec:
+              branch: <+trigger.branch>
