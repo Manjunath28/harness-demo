@@ -50,8 +50,8 @@ pipeline:
                   name: BuildAndPushDockerRegistry_1
                   identifier: BuildAndPushDockerRegistry_1
                   spec:
-                    connectorRef: account.harnessImage
-                    repo: test
+                    connectorRef: Manjunathpersonal
+                    repo: pes2ug19cs219/harness-test
                     tags:
                       - 1.1.1.1
           platform:
