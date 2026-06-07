@@ -1,0 +1,18 @@
+inputSet:
+  name: Default Input Set
+  identifier: default_input_set
+  orgIdentifier: default
+  projectIdentifier: default_project
+  pipeline:
+    identifier: CI_CD_STO_Pipeline
+    properties:
+      ci:
+        codebase:
+          build:
+            type: branch
+            spec:
+              branch: main
+    variables:
+      - name: docker_repo
+        type: String
+        value: <+input>

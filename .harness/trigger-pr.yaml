@@ -1,0 +1,39 @@
+trigger:
+  name: PR Security Scan
+  identifier: pr_security_scan
+  orgIdentifier: default
+  projectIdentifier: default_project
+  pipelineIdentifier: CI_CD_STO_Pipeline
+  description: "Trigger security scans on pull requests (shift-left)"
+  source:
+    type: Webhook
+    spec:
+      type: Github
+      spec:
+        type: PullRequest
+        spec:
+          connectorRef: github_connector
+          autoAbortPreviousExecutions: true
+          actions:
+            - Open
+            - Reopen
+            - Synchronize
+          payloadConditions:
+            - key: targetBranch
+              operator: Equals
+              value: main
+  inputYaml: |
+    pipeline:
+      identifier: CI_CD_STO_Pipeline
+      properties:
+        ci:
+          codebase:
+            build:
+              type: PR
+              spec:
+                number: <+trigger.prNumber>
+      variables:
+        - name: docker_repo
+          type: String
+          value: <+pipeline.variables.docker_repo>
+  enabled: true

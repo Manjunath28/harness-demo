@@ -1,0 +1,12 @@
+infrastructureDefinition:
+  name: local-k8s
+  identifier: local_k8s
+  orgIdentifier: default
+  projectIdentifier: default_project
+  environmentRef: dev
+  deploymentType: Kubernetes
+  type: KubernetesDirect
+  spec:
+    connectorRef: k8s_connector
+    namespace: harness-demo
+    releaseName: harness-cicd-app

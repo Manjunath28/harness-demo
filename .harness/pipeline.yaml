@@ -1,0 +1,232 @@
+pipeline:
+  name: CI-CD-STO-Pipeline
+  identifier: CI_CD_STO_Pipeline
+  projectIdentifier: default_project
+  orgIdentifier: default
+  tags: {}
+  properties:
+    ci:
+      codebase:
+        connectorRef: github_connector
+        repoName: harness-cicd-sto
+        build: <+input>
+
+  stages:
+    # ─────────────────────────────────────────────
+    # Stage 1: CI - Build & Push Docker Image
+    # ─────────────────────────────────────────────
+    - stage:
+        name: Build and Push
+        identifier: build_and_push
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: k8s_connector
+              namespace: harness-build
+              automountServiceAccountToken: true
+          execution:
+            steps:
+              - step:
+                  name: Run Unit Tests
+                  identifier: run_tests
+                  type: Run
+                  spec:
+                    connectorRef: dockerhub_connector
+                    image: node:20-alpine
+                    shell: Sh
+                    command: |
+                      cd app
+                      npm ci
+                      npm test -- --coverage
+                    reports:
+                      type: JUnit
+                      spec:
+                        paths:
+                          - "app/coverage/junit.xml"
+
+              - step:
+                  name: Build and Push Image
+                  identifier: build_push
+                  type: BuildAndPushDockerRegistry
+                  spec:
+                    connectorRef: dockerhub_connector
+                    repo: <+pipeline.variables.docker_repo>
+                    tags:
+                      - <+codebase.commitSha>
+                      - latest
+                    dockerfile: app/Dockerfile
+                    context: app
+                    optimize: true
+
+    # ─────────────────────────────────────────────
+    # Stage 2: STO - Security Testing
+    # ─────────────────────────────────────────────
+    - stage:
+        name: Security Scan
+        identifier: security_scan
+        type: SecurityTests
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: k8s_connector
+              namespace: harness-build
+              automountServiceAccountToken: true
+          execution:
+            steps:
+              # Container Image Scan (Required)
+              - step:
+                  name: Aqua Trivy Container Scan
+                  identifier: trivy_container_scan
+                  type: AquaTrivy
+                  spec:
+                    mode: orchestration
+                    config: default
+                    target:
+                      name: harness-cicd-app
+                      type: container
+                      variant: <+codebase.commitSha>
+                    advanced:
+                      log:
+                        level: info
+                      fail_on_severity: critical
+                    privileged: true
+                    image:
+                      type: docker_v2
+                      name: <+pipeline.variables.docker_repo>
+                      tag: <+codebase.commitSha>
+                      domain: docker.io
+
+              # SAST Scan (Bonus)
+              - step:
+                  name: Semgrep SAST Scan
+                  identifier: semgrep_sast
+                  type: Semgrep
+                  spec:
+                    mode: orchestration
+                    config: default
+                    target:
+                      name: harness-cicd-app
+                      type: repository
+                      variant: <+codebase.commitSha>
+                    advanced:
+                      log:
+                        level: info
+                      fail_on_severity: critical
+
+          # Security Gate - Fail on CRITICAL vulnerabilities
+          slsa_provenance:
+            enabled: false
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: Abort
+
+    # ─────────────────────────────────────────────
+    # Stage 3: CD - Deploy to Kubernetes
+    # ─────────────────────────────────────────────
+    - stage:
+        name: Deploy to Kubernetes
+        identifier: deploy_k8s
+        type: Deployment
+        spec:
+          deploymentType: Kubernetes
+          service:
+            serviceRef: harness_cicd_app_svc
+            serviceInputs:
+              serviceDefinition:
+                type: Kubernetes
+                spec:
+                  artifacts:
+                    primary:
+                      primaryArtifactRef: docker_image
+                      sources:
+                        - identifier: docker_image
+                          type: DockerRegistry
+                          spec:
+                            tag: <+codebase.commitSha>
+          environment:
+            environmentRef: dev
+            deployToAll: false
+            infrastructureDefinitions:
+              - identifier: local_k8s
+          execution:
+            steps:
+              - step:
+                  name: Rolling Deployment
+                  identifier: rolling_deploy
+                  type: K8sRollingDeploy
+                  spec:
+                    skipDryRun: false
+                    pruningEnabled: true
+                  timeout: 10m
+
+              - step:
+                  name: Verify Deployment Health
+                  identifier: verify_health
+                  type: Run
+                  spec:
+                    connectorRef: dockerhub_connector
+                    image: curlimages/curl:latest
+                    shell: Sh
+                    command: |
+                      echo "Waiting for deployment to stabilize..."
+                      sleep 15
+
+                      MAX_RETRIES=5
+                      RETRY_COUNT=0
+                      SUCCESS=false
+
+                      while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+                        RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://harness-cicd-app.harness-demo.svc.cluster.local/health || true)
+                        if [ "$RESPONSE" = "200" ]; then
+                          echo "Health check passed! (HTTP 200)"
+                          SUCCESS=true
+                          break
+                        fi
+                        RETRY_COUNT=$((RETRY_COUNT + 1))
+                        echo "Attempt $RETRY_COUNT/$MAX_RETRIES failed (HTTP $RESPONSE). Retrying in 10s..."
+                        sleep 10
+                      done
+
+                      if [ "$SUCCESS" = "false" ]; then
+                        echo "Health check FAILED after $MAX_RETRIES attempts"
+                        exit 1
+                      fi
+
+                      # Verify response body
+                      BODY=$(curl -s http://harness-cicd-app.harness-demo.svc.cluster.local/health)
+                      echo "Health endpoint response: $BODY"
+                  timeout: 5m
+
+            rollbackSteps:
+              - step:
+                  name: Rollback Deployment
+                  identifier: rollback
+                  type: K8sRollingRollback
+                  spec:
+                    pruningEnabled: true
+                  timeout: 10m
+
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: StageRollback
+
+  # ─────────────────────────────────────────────
+  # Pipeline Variables
+  # ─────────────────────────────────────────────
+  variables:
+    - name: docker_repo
+      type: String
+      description: "Docker Hub repository (e.g., username/harness-cicd-app)"
+      required: true
+      value: <+input>

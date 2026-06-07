@@ -1,0 +1,34 @@
+service:
+  name: harness-cicd-app-svc
+  identifier: harness_cicd_app_svc
+  orgIdentifier: default
+  projectIdentifier: default_project
+  serviceDefinition:
+    type: Kubernetes
+    spec:
+      manifests:
+        - manifest:
+            identifier: k8s_manifests
+            type: K8sManifest
+            spec:
+              store:
+                type: Github
+                spec:
+                  connectorRef: github_connector
+                  gitFetchType: Branch
+                  paths:
+                    - k8s/deployment.yaml
+                    - k8s/service.yaml
+                    - k8s/namespace.yaml
+                  branch: main
+              skipResourceVersioning: false
+      artifacts:
+        primary:
+          primaryArtifactRef: docker_image
+          sources:
+            - identifier: docker_image
+              type: DockerRegistry
+              spec:
+                connectorRef: dockerhub_connector
+                imagePath: <+pipeline.variables.docker_repo>
+                tag: <+input>
