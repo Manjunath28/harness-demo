@@ -54,6 +54,8 @@ pipeline:
                     repo: pes2ug19cs219/harness-test
                     tags:
                       - 1.1.1.1
+                    dockerfile: Dockerfile
+                    context: app
           platform:
             arch: Amd64
             os: Linux
