@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: <+artifact.image>
+          image: pes2ug19cs219/harness-test
           ports:
             - containerPort: 3000
               protocol: TCP
@@ -30,7 +30,7 @@ spec:
             - name: PORT
               value: "3000"
             - name: APP_VERSION
-              value: <+artifact.tag>
+              value: "latest"
           resources:
             requests:
               cpu: 100m
