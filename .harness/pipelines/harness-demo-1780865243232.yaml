@@ -54,6 +54,7 @@ pipeline:
                     repo: pes2ug19cs219/harness-test
                     tags:
                       - <+pipeline.sequenceId>
+                      - latest
                     dockerfile: app/Dockerfile
                     context: app
               - step:
