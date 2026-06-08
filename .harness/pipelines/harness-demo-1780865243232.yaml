@@ -64,3 +64,36 @@ pipeline:
             spec: {}
             type: Cloud
         type: CI
+    - stage:
+        name: Sec-scan
+        identifier: Secscan
+        description: ""
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - step:
+                  type: ShellScript
+                  name: container-scan
+                  identifier: containerscan
+                  spec:
+                    shell: Bash
+                    executionTarget: {}
+                    source:
+                      type: Inline
+                      spec:
+                        script: |-
+                          # Install Trivy scanner
+                          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+                          # Security Gate: FAIL on CRITICAL vulnerabilities
+                          echo "=== Running Container Security Scan ==="
+                          trivy image --exit-code 1 --severity CRITICAL --no-progress pes2ug19cs219/harness-test:<+pipeline.sequenceId>
+
+                          # Full vulnerability report (HIGH + CRITICAL)
+                          echo "=== Full Vulnerability Report ==="
+                          trivy image --severity HIGH,CRITICAL --no-progress pes2ug19cs219/harness-test:<+pipeline.sequenceId>
+                    environmentVariables: []
+                    outputVariables: []
+                  timeout: 10m
+        tags: {}
