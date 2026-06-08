@@ -1,27 +1,35 @@
 # Harness CI/CD + STO Pipeline
 
-End-to-end CI/CD pipeline with integrated Security Testing Orchestration (STO) using Harness Free Tier and a local Kubernetes cluster.
+End-to-end CI/CD pipeline with integrated Security Testing Orchestration (STO) using Harness Free Tier, deployed to a local Kubernetes cluster (Rancher Desktop).
+
+**Author:** Manjunath Y  
+**Harness Account:** manjunath.chavan2017  
+**GitHub Repo:** [Manjunath28/harness-demo](https://github.com/Manjunath28/harness-demo)
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                    Harness Pipeline                                │
-├─────────────────┬──────────────────┬─────────────────────────────┤
-│   CI Stage      │   STO Stage      │   CD Stage                   │
-│                 │                  │                               │
-│ • Clone repo    │ • Trivy scan     │ • Rolling deploy to K8s      │
-│ • Run tests     │ • Semgrep SAST   │ • Health check validation    │
-│ • Build image   │ • Security gate  │ • Auto-rollback on failure   │
-│ • Push to DHR   │   (fail on CRIT) │                               │
-└─────────────────┴──────────────────┴─────────────────────────────┘
-         │                  │                      │
-         ▼                  ▼                      ▼
-   ┌──────────┐     ┌─────────────┐      ┌──────────────────┐
-   │Docker Hub│     │ Fail if     │      │ Local K8s        │
-   │ Registry │     │ CRITICAL    │      │ (minikube/kind)  │
-   └──────────┘     │ vulns found │      └──────────────────┘
-                    └─────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Harness Pipeline                                     │
+├───────────────────┬───────────────────┬───────────────────┬─────────────────┤
+│   CI Stage        │   CD Stage        │  Post-Deploy      │                 │
+│   (build)         │   (deploy-k8s)    │  Stage            │                 │
+│                   │                   │                   │                 │
+│ • Clone repo      │ • K8s Rolling     │ • Health Check    │                 │
+│ • npm install     │   Deploy          │   (HTTP /health)  │                 │
+│ • npm test        │ • Auto-rollback   │ • Image Promotion │                 │
+│ • Docker build    │   on failure      │   (:latest→:stable)│                │
+│ • Push :seq,:latest│                  │ • GitOps PR       │                 │
+│ • Trivy scan      │                   │                   │                 │
+│ • SAST scan       │                   │                   │                 │
+│   (security gate) │                   │                   │                 │
+└───────────────────┴───────────────────┴───────────────────┴─────────────────┘
+         │                    │                    │
+         ▼                    ▼                    ▼
+   ┌──────────┐      ┌──────────────┐     ┌──────────────────┐
+   │Docker Hub│      │ Rancher      │     │ GitHub PR        │
+   │ Registry │      │ Desktop K8s  │     │ (manifest update)│
+   └──────────┘      └──────────────┘     └──────────────────┘
 ```
 
 ## Project Structure
@@ -29,36 +37,30 @@ End-to-end CI/CD pipeline with integrated Security Testing Orchestration (STO) u
 ```
 .
 ├── .harness/
-│   ├── pipeline.yaml       # Main Harness pipeline definition
-│   ├── service.yaml        # Harness service definition
-│   ├── environment.yaml    # Environment configuration
-│   ├── infrastructure.yaml # K8s infrastructure definition
-│   └── inputset.yaml       # Default input set
+│   ├── pipelines/              # Harness pipeline YAML (synced from Harness)
+│   ├── service.yaml            # Harness service definition
+│   ├── environment.yaml        # Environment configuration
+│   └── infrastructure.yaml     # K8s infrastructure definition
 ├── app/
-│   ├── server.js           # Node.js Express application
-│   ├── server.test.js      # Jest unit tests
-│   ├── package.json        # Dependencies
-│   ├── Dockerfile          # Multi-stage Docker build
-│   └── .dockerignore
+│   ├── server.js               # Node.js Express application
+│   ├── server.test.js          # Jest unit tests
+│   ├── package.json            # Dependencies
+│   └── Dockerfile              # Multi-stage Docker build
+├── infra/
+│   ├── harness-delegate.yaml   # Delegate deployment (one-time setup)
+│   └── namespace.yaml          # K8s namespace definition
 ├── k8s/
-│   ├── namespace.yaml      # Kubernetes namespace
-│   ├── deployment.yaml     # Deployment with rolling strategy
-│   └── service.yaml        # NodePort service
-├── scripts/
-│   ├── setup-local-cluster.sh    # Minikube setup
-│   ├── build-local.sh            # Local build & test
-│   ├── validate-deployment.sh    # Post-deploy validation
-│   └── cleanup.sh                # Teardown resources
+│   ├── deployment.yaml         # Deployment with rolling strategy
+│   └── service.yaml            # NodePort service (port 30080)
 └── README.md
 ```
 
 ## Prerequisites
 
-- **Docker** (v20+)
-- **minikube** or **kind** (local Kubernetes)
+- **Rancher Desktop** (local Kubernetes cluster)
 - **kubectl** (v1.28+)
 - **Harness Free Tier account** ([sign up](https://app.harness.io/auth/#/signup))
-- **Docker Hub account** (for image registry)
+- **Docker Hub account** (image registry)
 - **GitHub account** (source code hosting)
 
 ## Setup Instructions
@@ -66,125 +68,123 @@ End-to-end CI/CD pipeline with integrated Security Testing Orchestration (STO) u
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/<your-username>/harness-cicd-sto.git
-cd harness-cicd-sto
+git clone https://github.com/Manjunath28/harness-demo.git
+cd harness-demo
 ```
 
 ### 2. Set Up Local Kubernetes Cluster
 
+Install and start **Rancher Desktop** (uses k3s under the hood):
 ```bash
-./scripts/setup-local-cluster.sh
+# Verify cluster is running
+kubectl get nodes
+# Expected: lima-rancher-desktop   Ready
 ```
 
-This script will:
-- Validate prerequisites (docker, minikube, kubectl)
-- Start a minikube cluster with 2 CPUs and 4GB RAM
-- Enable ingress and metrics-server addons
-- Create required namespaces (`harness-demo`, `harness-build`)
-
-### 3. Local Build & Smoke Test
-
+Create the application namespace:
 ```bash
-./scripts/build-local.sh
+kubectl apply -f infra/namespace.yaml
 ```
 
-### 4. Configure Harness
+### 3. Install Harness Delegate
 
-#### a) Install Harness Delegate
+```bash
+kubectl apply -f infra/harness-delegate.yaml
+kubectl get pods -n harness-delegate-ng
+# Expected: kubernetes-delegate-xxx   Running
+```
 
-1. Navigate to **Project Settings > Delegates** in Harness UI
-2. Click **New Delegate > Kubernetes**
-3. Apply the downloaded YAML to your cluster:
-   ```bash
-   kubectl apply -f harness-delegate.yaml
-   ```
-4. Verify: `kubectl get pods -n harness-delegate-ng`
-
-#### b) Create Connectors
+### 4. Configure Harness Connectors
 
 | Connector | Type | Purpose |
 |-----------|------|---------|
-| `github_connector` | GitHub | Source code access |
-| `dockerhub_connector` | Docker Registry | Push/pull images |
-| `k8s_connector` | Kubernetes | Deploy to cluster |
-
-**Important:** Use Harness Secrets Manager for all credentials. Never hardcode tokens.
-
-#### c) Import Pipeline
-
-1. Go to **Pipelines > Create Pipeline**
-2. Choose **Import from Git**
-3. Point to `.harness/pipeline.yaml` in your repo
+| `account.Github` | GitHub | Source code access |
+| `Manjunathpersonal` | Docker Registry | Push/pull images |
+| `rancher-desktop` | Kubernetes (via delegate) | Deploy to cluster |
 
 ### 5. Run the Pipeline
 
-1. Click **Run** on the pipeline
-2. Provide inputs:
-   - **Branch**: `main`
-   - **docker_repo**: `<your-dockerhub-username>/harness-cicd-app`
-3. Monitor execution across all 3 stages
+1. Go to **Pipelines** → **Build harness-demo**
+2. Click **Run** → Branch: `main`
+3. Monitor all stages: build → deploy-k8s → post-deploy-stage
 
 ### 6. Validate Deployment
 
 ```bash
-./scripts/validate-deployment.sh
-```
+curl http://localhost:30080/health
+# {"status":"healthy","timestamp":"...","uptime":...}
 
-Or access directly:
-```bash
-kubectl port-forward svc/harness-cicd-app 8080:80 -n harness-demo
-curl http://localhost:8080/health
+curl http://localhost:30080/
+# {"message":"Hello World","service":"harness-cicd-sto-app","version":"latest"}
 ```
 
 ## Pipeline Stages Explained
 
-### Stage 1: CI (Build & Push)
+### Stage 1: CI (build)
 
-- **Clone**: Fetches source from GitHub
-- **Test**: Runs Jest unit tests with coverage reporting
-- **Build**: Multi-stage Docker build (minimal Alpine image, non-root user)
-- **Push**: Tags with commit SHA + `latest`, pushes to Docker Hub
+| Step | Description |
+|------|-------------|
+| Clone | Fetches source from GitHub (`Manjunath28/harness-demo`) |
+| Install | `npm ci` — installs dependencies |
+| Test | `npm test` — runs Jest unit tests |
+| Build & Push | Multi-stage Docker build → pushes `pes2ug19cs219/harness-test:<sequenceId>` + `:latest` |
+| Container Scan (Trivy) | Scans image for OS/library vulnerabilities, **fails on CRITICAL** |
+| SAST Scan (Semgrep) | Static code analysis for security issues |
 
-### Stage 2: STO (Security Testing)
+### Stage 2: CD (deploy-k8s)
 
-#### Container Scan (Aqua Trivy)
-- Scans the built Docker image for OS and library vulnerabilities
-- Checks against CVE databases
+| Step | Description |
+|------|-------------|
+| K8s Rolling Deploy | Deploys `pes2ug19cs219/harness-test:latest` with zero-downtime rolling strategy |
+| Auto-Rollback | On failure, `K8sRollingRollback` restores previous version |
 
-#### SAST Scan (Semgrep) - Bonus
-- Static analysis of source code
-- Detects common security patterns (injection, hardcoded secrets, etc.)
+### Stage 3: Post-Deploy (post-deploy-stage)
 
-### Security Gate
+| Step | Description |
+|------|-------------|
+| Health Check (HTTP) | GET `/health` endpoint, asserts HTTP 200 |
+| Image Promotion | Tags verified image as `:stable` using regctl |
+| GitOps PR | Creates a GitHub PR to update `k8s/deployment.yaml` with promoted tag |
 
-The pipeline is configured to **automatically fail** if any **CRITICAL** severity vulnerabilities are detected:
+## How Security Gating Works
 
-```yaml
-advanced:
-  fail_on_severity: critical
+The pipeline enforces a **shift-left security** approach:
+
+```
+Code Push → Build → Security Scan → Deploy (only if scan passes)
 ```
 
-This enforces a shift-left security posture:
-- **CRITICAL** → Pipeline fails (blocks deployment)
-- **HIGH/MEDIUM/LOW** → Pipeline continues (logged for review)
+### Container Scan (Trivy)
+```bash
+trivy image --exit-code 1 --severity CRITICAL --no-progress pes2ug19cs219/harness-test:<tag>
+```
+- `--exit-code 1`: Fails the step if vulnerabilities are found
+- `--severity CRITICAL`: Only blocks on critical CVEs
+- If this step fails → **pipeline stops**, CD stage never executes
 
-If the STO stage fails, the CD stage is never reached, preventing insecure code from being deployed.
+### SAST Scan (Semgrep)
+```bash
+semgrep scan --config auto --error --severity ERROR app/
+```
+- Analyzes source code for injection, hardcoded secrets, insecure patterns
+- `--error`: Fails on high-severity findings
 
-### Stage 3: CD (Deploy to Kubernetes)
+### Security Gate Matrix
 
-- **Rolling Deployment**: Zero-downtime updates with `maxSurge: 1, maxUnavailable: 0`
-- **Health Verification**: Automated /health endpoint check with retries
-- **Auto-Rollback**: If deployment fails, automatically rolls back to previous version
+| Severity | Action |
+|----------|--------|
+| CRITICAL | Pipeline **FAILS** — deployment blocked |
+| HIGH/MEDIUM/LOW | Pipeline continues — logged for review |
+
+### Image Promotion as Security Signal
+Only images that pass ALL checks get promoted to `:stable`:
+```
+:latest (unverified) → Security Scan ✓ → Deploy ✓ → Health Check ✓ → :stable (verified)
+```
 
 ## Deployment Strategy
 
-**Rolling Update** was chosen because:
-- Zero-downtime deployments
-- Gradual rollout with health checks
-- Automatic rollback capability
-- Simple to configure and understand
-
-Configuration:
+**Rolling Update** configuration:
 ```yaml
 strategy:
   type: RollingUpdate
@@ -193,78 +193,74 @@ strategy:
     maxUnavailable: 0  # Never reduce available pods below desired
 ```
 
-## Security Design Decisions
+Why Rolling Update:
+- Zero-downtime deployments
+- Gradual rollout with health checks
+- Automatic rollback on failure
+- 2 replicas ensure availability during updates
 
-| Decision | Rationale |
-|----------|-----------|
-| Multi-stage Docker build | Smaller attack surface, no build tools in production |
-| Non-root container user | Principle of least privilege |
-| Alpine base image | Minimal OS packages = fewer vulnerabilities |
-| `fail_on_severity: critical` | Block deployment of critically vulnerable code |
-| Harness Secrets Manager | No credentials in code or environment |
-| Resource limits | Prevent DoS from runaway containers |
-| Health checks (liveness + readiness) | Automatic recovery from failures |
+## Artifact Promotion & GitOps
 
-## Bonus Features Implemented
-
-### Shift-Left Security
-- Pipeline can be triggered on PRs via Harness triggers
-- Security scans run before merge, preventing vulnerable code from entering main
-
-### Failure Handling
-- **Rollback**: Automatic `K8sRollingRollback` on deployment failure
-- **Retry Logic**: Health validation retries with backoff (5 attempts, 10s interval)
-- **Stage Abort**: STO failure aborts pipeline before CD stage executes
-
-### Secrets Management
-- All credentials stored in Harness Secrets Manager
-- Connectors reference secrets by ID, never by value
-- No hardcoded tokens in pipeline YAML or application code
+After successful deployment and health verification:
+1. Image is re-tagged from `:latest` → `:stable` at registry level
+2. A GitHub PR is automatically created to update `k8s/deployment.yaml`
+3. This provides an audit trail of what was deployed and when
 
 ## Assumptions & Trade-offs
 
-| Assumption | Trade-off |
+| Assumption | Rationale |
 |------------|-----------|
-| Using minikube for local K8s | Limited resources; fine for demo, not production |
-| Docker Hub as registry | Free tier has rate limits; alternatives: GHCR, ECR |
-| NodePort for access | Not production-grade; real clusters use Ingress/LB |
-| Single environment (dev) | Simplified; production would have dev → staging → prod |
-| Trivy for container scan | Free and well-supported; alternatives: Snyk, Grype |
-| 2 replicas | Demonstrates HA basics; production needs capacity planning |
+| Rancher Desktop for local K8s | Free, lightweight k3s cluster for development |
+| Docker Hub as registry | Free tier; production would use private registry |
+| NodePort (30080) for access | Simple for local dev; production uses Ingress/LB |
+| Single environment (dev) | Simplified demo; production: dev → staging → prod |
+| Trivy for container scan | Free, well-maintained, fast CVE scanning |
+| Semgrep for SAST | Free, supports JS/Node.js, extensive rule library |
+| 2 replicas | Demonstrates HA; production needs capacity planning |
+| Harness Cloud for CI | Free tier build infrastructure, no self-hosted runners |
+| Delegate for CD | Required for local K8s access from Harness SaaS |
+
+## Secrets Management
+
+| Secret | Purpose | Stored In |
+|--------|---------|-----------|
+| `docker-secret` | Docker Hub credentials for push | Harness Secrets Manager |
+| `github_pat` | GitHub PAT for GitOps PR creation | Harness Secrets Manager |
+
+All credentials are stored in Harness Secrets Manager — never hardcoded in pipeline YAML or source code.
 
 ## Troubleshooting
 
-### Pipeline fails at Build step
-- Verify Docker Hub credentials in Harness connector
-- Check delegate has Docker socket access
+### Pipeline fails at Docker Build
+- Verify Docker Hub connector credentials
+- Ensure `app/Dockerfile` path is correct in the step config
 
-### STO scan fails with timeout
-- Ensure delegate has internet access for CVE database downloads
-- Increase step timeout if on slow network
+### Security scan fails (expected)
+- CRITICAL vulnerabilities found → fix the base image or dependencies
+- This is **working as designed** — the security gate is protecting production
 
-### Deployment not accessible
-```bash
-# Check pods are running
-kubectl get pods -n harness-demo
+### CD stage fails with ImagePullBackOff
+- Ensure CI pushed the `:latest` tag (check Docker Hub)
+- Verify the K8s nodes can reach Docker Hub
 
-# Check pod logs
-kubectl logs -l app=harness-cicd-app -n harness-demo
+### Health check fails in post-deploy
+- Check pods are running: `kubectl get pods -n harness-demo`
+- Verify service: `kubectl get svc -n harness-demo`
+- Test locally: `curl http://localhost:30080/health`
 
-# Check service endpoints
-kubectl get endpoints harness-cicd-app -n harness-demo
-```
+## Tech Stack
 
-### Delegate not connecting
-```bash
-kubectl get pods -n harness-delegate-ng
-kubectl logs -l app=harness-delegate -n harness-delegate-ng
-```
-
-## Cleanup
-
-```bash
-./scripts/cleanup.sh
-```
+| Component | Technology |
+|-----------|-----------|
+| Application | Node.js + Express |
+| Testing | Jest |
+| Container | Docker (multi-stage, Alpine, non-root) |
+| CI/CD Platform | Harness Free Tier |
+| Orchestration | Kubernetes (k3s via Rancher Desktop) |
+| Container Scan | Aqua Trivy |
+| SAST | Semgrep |
+| Registry | Docker Hub |
+| Source Control | GitHub |
 
 ## License
 
