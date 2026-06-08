@@ -117,3 +117,24 @@ pipeline:
                 - AllErrors
               action:
                 type: StageRollback
+    - stage:
+        name: post-deploy-stage
+        identifier: postdeploystage
+        description: ""
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - step:
+                  type: Http
+                  name: Health_Check
+                  identifier: Health_Check
+                  spec:
+                    url: http://harness-cicd-app.harness-demo.svc.cluster.local/health
+                    method: GET
+                    headers: []
+                    inputVariables: []
+                    outputVariables: []
+                    assertion: " <+httpResponseCode> == 200"
+                  timeout: 30s
+        tags: {}
