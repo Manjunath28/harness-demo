@@ -168,4 +168,51 @@ pipeline:
                     environmentVariables: []
                     outputVariables: []
                   timeout: 20s
+              - step:
+                  type: ShellScript
+                  name: gitops_pr
+                  identifier: gitops_pr
+                  spec:
+                    shell: Bash
+                    executionTarget: {}
+                    source:
+                      type: Inline
+                      spec:
+                        script: |-
+                          #!/bin/bash
+                          set -e
+
+                          IMAGE="pes2ug19cs219/harness-test"
+                          NEW_TAG="stable"
+                          REPO="Manjunath28/harness-demo"
+                          BRANCH="gitops-update-$(date +%s)"
+                          FILE_PATH="k8s/deployment.yaml"
+                          PAT="<+secrets.getValue("github_pat")>"
+
+                          echo "=== GitOps: Updating manifest via PR ==="
+
+                          git config --global user.email "ci@harness.io"
+                          git config --global user.name "Harness CI"
+
+                          git clone https://${PAT}@github.com/${REPO}.git /tmp/repo
+                          cd /tmp/repo
+
+                          git checkout -b ${BRANCH}
+
+                          sed -i "s|image: ${IMAGE}:.*|image: ${IMAGE}:${NEW_TAG}|g" ${FILE_PATH}
+
+                          git add ${FILE_PATH}
+                          git commit -m "chore: promote image to ${IMAGE}:${NEW_TAG} [skip ci]"
+                          git push origin ${BRANCH}
+
+                          curl -s -X POST \
+                            -H "Authorization: token ${PAT}" \
+                            -H "Accept: application/vnd.github.v3+json" \
+                            https://api.github.com/repos/${REPO}/pulls \
+                            -d "{\"title\":\"GitOps: Promote image to ${IMAGE}:${NEW_TAG}\",\"body\":\"Automated promotion after health check passed.\",\"head\":\"${BRANCH}\",\"base\":\"main\"}"
+
+                          echo "=== PR Created ==="
+                    environmentVariables: []
+                    outputVariables: []
+                  timeout: 2m
         tags: {}
