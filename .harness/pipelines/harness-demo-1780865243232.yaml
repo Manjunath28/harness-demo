@@ -47,7 +47,7 @@ pipeline:
                       npm test
               - step:
                   type: BuildAndPushDockerRegistry
-                  name: BuildAndPushDockerRegistry_1
+                  name: buildandpush
                   identifier: BuildAndPushDockerRegistry_1
                   spec:
                     connectorRef: Manjunathpersonal
@@ -59,7 +59,7 @@ pipeline:
                     context: app
               - step:
                   type: Run
-                  name: sec-scan
+                  name: trivy-scan
                   identifier: secscan
                   spec:
                     shell: Sh
@@ -71,6 +71,21 @@ pipeline:
                       echo "=== Container Security Scan ==="
                       trivy image --exit-code 1 --severity CRITICAL --no-progress pes2ug19cs219/harness-test:<+pipeline.sequenceId>
                   description: Trivy scan to find the vul in the container images
+              - step:
+                  type: Run
+                  name: sast_scan
+                  identifier: sast_scan
+                  spec:
+                    shell: Sh
+                    command: |-
+                      # Install Semgrep (SAST scanner)
+                      pip install semgrep
+
+                      # Run SAST scan on source code
+                      echo "=== SAST Security Scan (Semgrep) ==="
+                      semgrep scan --config auto --error --severity ERROR app/
+
+                      echo "SAST scan passed - no critical issues found"
           platform:
             arch: Amd64
             os: Linux
