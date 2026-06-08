@@ -137,4 +137,35 @@ pipeline:
                     outputVariables: []
                     assertion: " <+httpResponseCode> == 200"
                   timeout: 30s
+              - step:
+                  type: ShellScript
+                  name: image_promote
+                  identifier: image_promote
+                  spec:
+                    shell: Bash
+                    executionTarget: {}
+                    source:
+                      type: Inline
+                      spec:
+                        script: |-
+                          #!/bin/bash
+                          set -e
+
+                          IMAGE="pes2ug19cs219/harness-test"
+
+                          echo "=== Artifact Promotion ==="
+
+                          curl -sL https://github.com/regclient/regclient/releases/latest/download/regctl-linux-amd64 -o /usr/local/bin/regctl
+                          chmod +x /usr/local/bin/regctl
+
+                          regctl registry login docker.io \
+                            --user pes2ug19cs219 \
+                            --pass <+secrets.getValue("docker-secret")>
+
+                          regctl image copy ${IMAGE}:latest ${IMAGE}:stable
+
+                          echo "Promoted: ${IMAGE}:latest → ${IMAGE}:stable"
+                    environmentVariables: []
+                    outputVariables: []
+                  timeout: 20s
         tags: {}
