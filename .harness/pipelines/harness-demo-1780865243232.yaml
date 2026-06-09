@@ -209,6 +209,7 @@ pipeline:
                           git config --global user.email "ci@harness.io"
                           git config --global user.name "Harness CI"
 
+                          rm -rf /tmp/repo
                           git clone https://${PAT}@github.com/${REPO}.git /tmp/repo
                           cd /tmp/repo
 
