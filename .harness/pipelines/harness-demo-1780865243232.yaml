@@ -137,6 +137,9 @@ pipeline:
         identifier: postdeploystage
         description: ""
         type: Custom
+        when:
+          pipelineStatus: Success
+          condition: <+codebase.branch> == null || !<+codebase.branch>.startsWith("gitops-update-")
         spec:
           execution:
             steps:
