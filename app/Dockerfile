@@ -1,3 +1,4 @@
+# Stage 1
 FROM node:20-alpine AS builder
 
 WORKDIR /app
