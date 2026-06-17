@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: pes2ug19cs219/harness-test:latest
+          image: pes2ug19cs219/harness-test:stable
           ports:
             - containerPort: 3000
               protocol: TCP
