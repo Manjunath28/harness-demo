@@ -1,0 +1,237 @@
+pipeline:
+  identifier: Build_Manjunath28_harness_demo_1780865310852
+  name: Build harness-demo
+  orgIdentifier: default
+  projectIdentifier: Harnessdemo
+  properties:
+    ci:
+      codebase:
+        build: <+input>
+        connectorRef: account.Github
+        repoName: Manjunath28/harness-demo
+  stages:
+    - stage:
+        identifier: build
+        name: build
+        spec:
+          caching:
+            enabled: true
+          cloneCodebase: true
+          execution:
+            steps:
+              - step:
+                  identifier: echo
+                  name: echo
+                  spec:
+                    command: echo hello world
+                  timeout: ""
+                  type: Run
+              - step:
+                  type: Run
+                  name: Run
+                  identifier: Run
+                  spec:
+                    shell: Sh
+                    command: |-
+                      cd app
+                      npm ci
+                  description: install dependency
+              - step:
+                  type: Run
+                  name: Run_Tests
+                  identifier: Run_Tests
+                  spec:
+                    shell: Sh
+                    command: |-
+                      cd app
+                      npm test
+              - step:
+                  type: Run
+                  name: sast_scan
+                  identifier: sast_scan
+                  spec:
+                    shell: Sh
+                    command: |-
+                      # Install Semgrep (SAST scanner)
+                      pip install semgrep
+
+                      # Run SAST scan on source code
+                      echo "=== SAST Security Scan (Semgrep) ==="
+                      semgrep scan --config auto --error --severity ERROR app/
+
+                      echo "SAST scan passed - no critical issues found"
+              - step:
+                  type: BuildAndPushDockerRegistry
+                  name: buildandpush
+                  identifier: BuildAndPushDockerRegistry_1
+                  spec:
+                    connectorRef: Manjunathpersonal
+                    repo: pes2ug19cs219/harness-test
+                    tags:
+                      - <+pipeline.sequenceId>
+                      - latest
+                    dockerfile: app/Dockerfile
+                    context: app
+              - step:
+                  type: Run
+                  name: trivy-scan
+                  identifier: secscan
+                  spec:
+                    shell: Sh
+                    command: |-
+                      # Install Trivy
+                      curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+                      # Security Gate: FAIL on CRITICAL vulnerabilities
+                      echo "=== Container Security Scan ==="
+                      trivy image --exit-code 1 --severity CRITICAL --no-progress pes2ug19cs219/harness-test:<+pipeline.sequenceId>
+                  description: Trivy scan to find the vul in the container images
+          platform:
+            arch: Amd64
+            os: Linux
+          runtime:
+            spec: {}
+            type: Cloud
+        type: CI
+    - stage:
+        name: deploy-k8s
+        identifier: deployk8s
+        description: ""
+        type: Deployment
+        spec:
+          deploymentType: Kubernetes
+          service:
+            serviceRef: harnessapp
+          environment:
+            environmentRef: dev
+            deployToAll: false
+            infrastructureDefinitions:
+              - identifier: rancherdesktop
+          execution:
+            steps:
+              - step:
+                  name: Rollout Deployment
+                  identifier: rolloutDeployment
+                  type: K8sRollingDeploy
+                  timeout: 2m
+                  spec:
+                    skipDryRun: false
+                    pruningEnabled: false
+            rollbackSteps:
+              - step:
+                  name: Rollback Rollout Deployment
+                  identifier: rollbackRolloutDeployment
+                  type: K8sRollingRollback
+                  timeout: 10m
+                  spec:
+                    pruningEnabled: false
+        tags: {}
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: StageRollback
+    - stage:
+        name: post-deploy-stage
+        identifier: postdeploystage
+        description: ""
+        type: Custom
+        when:
+          pipelineStatus: Success
+          condition: <+codebase.branch> == null || !<+codebase.branch>.startsWith("gitops-update-")
+        spec:
+          execution:
+            steps:
+              - step:
+                  type: Http
+                  name: Health_Check
+                  identifier: Health_Check
+                  spec:
+                    url: http://harness-cicd-app.harness-demo.svc.cluster.local/health
+                    method: GET
+                    headers: []
+                    inputVariables: []
+                    outputVariables: []
+                    assertion: " <+httpResponseCode> == 200"
+                  timeout: 30s
+              - step:
+                  type: ShellScript
+                  name: image_promote
+                  identifier: image_promote
+                  spec:
+                    shell: Bash
+                    executionTarget: {}
+                    source:
+                      type: Inline
+                      spec:
+                        script: |-
+                          #!/bin/bash
+                          set -e
+
+                          IMAGE="pes2ug19cs219/harness-test"
+
+                          echo "=== Artifact Promotion ==="
+
+                          curl -sL https://github.com/regclient/regclient/releases/latest/download/regctl-linux-amd64 -o /usr/local/bin/regctl
+                          chmod +x /usr/local/bin/regctl
+
+                          regctl registry login docker.io \
+                            --user pes2ug19cs219 \
+                            --pass <+secrets.getValue("docker-secret")>
+
+                          regctl image copy ${IMAGE}:latest ${IMAGE}:stable
+
+                          echo "Promoted: ${IMAGE}:latest → ${IMAGE}:stable"
+                    environmentVariables: []
+                    outputVariables: []
+                  timeout: 20s
+              - step:
+                  type: ShellScript
+                  name: gitops_pr
+                  identifier: gitops_pr
+                  spec:
+                    shell: Bash
+                    executionTarget: {}
+                    source:
+                      type: Inline
+                      spec:
+                        script: |-
+                          #!/bin/bash
+                          set -e
+
+                          IMAGE="pes2ug19cs219/harness-test"
+                          NEW_TAG="stable"
+                          REPO="Manjunath28/harness-demo"
+                          BRANCH="gitops-update-$(date +%s)"
+                          FILE_PATH="k8s/deployment.yaml"
+                          PAT="<+secrets.getValue("github_pat")>"
+
+                          echo "=== GitOps: Updating manifest via PR ==="
+
+                          git config --global user.email "ci@harness.io"
+                          git config --global user.name "Harness CI"
+
+                          rm -rf /tmp/repo
+                          git clone https://${PAT}@github.com/${REPO}.git /tmp/repo
+                          cd /tmp/repo
+
+                          git checkout -b ${BRANCH}
+
+                          sed -i "s|image: ${IMAGE}:.*|image: ${IMAGE}:${NEW_TAG}|g" ${FILE_PATH}
+
+                          git add ${FILE_PATH}
+                          git commit -m "chore: promote image to ${IMAGE}:${NEW_TAG} [skip ci]"
+                          git push origin ${BRANCH}
+
+                          curl -s -X POST \
+                            -H "Authorization: token ${PAT}" \
+                            -H "Accept: application/vnd.github.v3+json" \
+                            https://api.github.com/repos/${REPO}/pulls \
+                            -d "{\"title\":\"GitOps: Promote image to ${IMAGE}:${NEW_TAG}\",\"body\":\"Automated promotion after health check passed.\",\"head\":\"${BRANCH}\",\"base\":\"main\"}"
+
+                          echo "=== PR Created ==="
+                    environmentVariables: []
+                    outputVariables: []
+                  timeout: 2m
+        tags: {}
