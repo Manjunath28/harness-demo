@@ -7,7 +7,7 @@ pipeline:
     ci:
       codebase:
         build: <+input>
-        connectorRef: harness-git
+        connectorRef: harnessgit
         repoName: Manjunath28/harness-demo
   stages:
     - stage:
