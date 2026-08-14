@@ -26,16 +26,32 @@ pipeline:
                     command: echo hello world
                   timeout: ""
                   type: Run
-              - step:
-                  type: Run
-                  name: Run
-                  identifier: Run
-                  spec:
-                    shell: Sh
-                    command: |-
-                      cd app
-                      npm ci
-                  description: install dependency
+              - parallel:
+                  - step:
+                      type: Run
+                      name: Run
+                      identifier: Run
+                      spec:
+                        shell: Sh
+                        command: |-
+                          cd app
+                          npm ci
+                      description: install dependency
+                  - step:
+                      type: Run
+                      name: sast_scan
+                      identifier: sast_scan
+                      spec:
+                        shell: Sh
+                        command: |-
+                          # Install Semgrep (SAST scanner)
+                          pip install semgrep
+
+                          # Run SAST scan on source code
+                          echo "=== SAST Security Scan (Semgrep) ==="
+                          semgrep scan --config auto --error --severity ERROR app/
+
+                          echo "SAST scan passed - no critical issues found"
               - step:
                   type: Run
                   name: Run_Tests
@@ -45,21 +61,6 @@ pipeline:
                     command: |-
                       cd app
                       npm test
-              - step:
-                  type: Run
-                  name: sast_scan
-                  identifier: sast_scan
-                  spec:
-                    shell: Sh
-                    command: |-
-                      # Install Semgrep (SAST scanner)
-                      pip install semgrep
-
-                      # Run SAST scan on source code
-                      echo "=== SAST Security Scan (Semgrep) ==="
-                      semgrep scan --config auto --error --severity ERROR app/
-
-                      echo "SAST scan passed - no critical issues found"
               - step:
                   type: BuildAndPushDockerRegistry
                   name: buildandpush
